@@ -1,39 +1,39 @@
-# Modèle de menace
+# Threat model
 
-Actif protégé : le contenu d'une boîte mail Infomaniak, et la capacité d'agir en son nom.
-Principe : le serveur ne sait que **lire** et **déposer des brouillons**. Ce qui n'est pas codé ne peut pas être détourné.
+Protected asset: the content of one IMAP mailbox, and the ability to act on its behalf.
+Principle: the server can only **read** and **save drafts**. What isn't coded can't be abused.
 
-## Menaces et mesures
+## Threats and mitigations
 
-| Menace | Mesures |
+| Threat | Mitigations |
 |---|---|
-| **Vol d'un access token** | JWT RS256 valable **15 min**, audience = l'URL exacte `/mcp` (RFC 8707), émetteur vérifié. Chaque appel vérifie aussi que le `jti` n'est pas révoqué, donc kill switch et révocation sont immédiats. Pas de jeton en URL (en-tête `Authorization` seulement). `Cache-Control: no-store`. Limite : 120 req/min par jeton. |
-| **Vol d'un refresh token** | Opaque et chiffré. **Rotation à chaque usage** ; une réutilisation **révoque toute la famille** (refresh et access tokens). La détection est atomique, y compris pour deux requêtes concurrentes. Durée de vie absolue de 30 jours par famille. Révocation RFC 7009 et `bin/revoke-all.php`. Client confidentiel : le secret est en plus requis à `/token`. |
-| **Vol d'un code d'autorisation** | Usage unique (consommation atomique), 60 s, PKCE **S256 obligatoire** (`plain` et absence refusés), lié au client et à la `redirect_uri`. |
-| **Phishing OAuth / redirection ouverte** | `redirect_uri` comparée **exactement** à celle enregistrée (sans préfixe ni joker), et obligatoire. En cas d'erreur, aucune redirection : une page d'erreur s'affiche. DCR désactivé par défaut ; s'il est activé : liste blanche exacte, plafond de clients, limite de débit. Le consentement affiche le nom du client et **le domaine de retour**. Seuls `authorization_code` et `refresh_token` sont acceptés (pas d'implicit, de password ni de client_credentials). |
-| **Injection de prompt via un mail** | Le contenu est renvoyé sous `untrusted_content`, avec un avertissement dans les descriptions d'outils et dans les instructions du serveur. Le HTML est converti en texte : scripts, styles, images et liens supprimés, rien n'est chargé. Surtout, **aucun outil n'a d'effet irréversible** : pas d'envoi, de suppression, de déplacement ni de drapeau. Le pire résultat est un brouillon, que l'humain relit avant d'envoyer lui-même. |
-| **Exfiltration via brouillon** (mail piégé qui pousse Claude à écrire des données dans un brouillon adressé à un tiers) | Le brouillon n'est **jamais envoyé** par le serveur. Les destinataires sont validés, et les en-têtes sont protégés contre l'injection CRLF. Risque résiduel : voir plus bas. |
-| **Force brute sur la connexion** | Mot de passe Argon2id **et** TOTP obligatoires, comparés en temps constant. Un code TOTP ne peut pas être rejoué. Backoff exponentiel (2^n s) puis **verrouillage 15 min après 5 échecs**, par IP **et** globalement. Tout est journalisé. CSRF sur le formulaire, cookie `__Host-` `Secure; HttpOnly; SameSite=Strict`. |
-| **Clickjacking / XSS sur la page de connexion** | CSP stricte (`default-src 'none'`, style avec nonce, `frame-ancestors 'none'`, `form-action` limité), `X-Frame-Options: DENY`, échappement HTML systématique. |
-| **DNS rebinding / appel depuis un navigateur** | `Origin` vérifié sur `/mcp` (403 s'il est présent et hors liste), `Host` vérifié par le middleware du SDK. |
-| **Injection IMAP** | Les dossiers sont comparés à la liste réelle. UID entiers bornés, dates ISO strictes, pas de caractère de contrôle. Les chaînes passent par l'API d'ImapEngine, qui les échappe. |
-| **Interception IMAP** | TLS implicite (993) avec **vérification du certificat et du nom d'hôte**, timeout de 10 s, connexion fermée en fin de requête. |
-| **Compromission de l'hébergement** | Secrets hors racine web (600/700) ; `public/` ne contient que `index.php` et `.htaccess`, avec des règles de refus en plus. Mot de passe propriétaire haché, secret client haché (Argon2id). La boîte n'est accessible qu'avec un **mot de passe d'application révocable**. Procédure d'urgence dans le README. |
-| **Fuite par les erreurs ou les journaux** | `display_errors=Off` ; client : messages génériques. Journal d'audit sans mot de passe, jeton, code, secret ni contenu de mail (le corps des brouillons est exclu), avec masquage des clés sensibles en filet de sécurité. Un test le vérifie. |
-| **Déni de service applicatif** | Limites de débit sur `/token`, `/revoke`, `/register` (par IP) et `/mcp` (par jeton). Corps MCP limité à 1 Mo. `limit` ≤ 50, parties de plus de 2 Mo ignorées, corps tronqué à 50 ko. |
-| **Dépendances** | `composer.lock` versionné, versions exactes dans `composer.json`, `composer audit` propre au 25/11/2026. |
+| **Stolen access token** | RS256 JWT valid **15 min**, audience = the exact `/mcp` URL (RFC 8707), issuer checked. Every call also checks that the `jti` isn't revoked, so the kill switch and revocation take effect immediately. No token in URLs (`Authorization` header only). `Cache-Control: no-store`. Limit: 120 req/min per token. |
+| **Stolen refresh token** | Opaque and encrypted. **Rotated on every use**; reuse **revokes the whole family** (refresh and access tokens). Detection is atomic, including for two concurrent requests. Absolute lifetime of 30 days per family. RFC 7009 revocation and `bin/revoke-all.php`. Confidential client: the secret is also required at `/token`. |
+| **Stolen authorization code** | Single use (atomic consumption), 60 s, **mandatory PKCE S256** (`plain` and missing challenge rejected), bound to the client and the `redirect_uri`. |
+| **OAuth phishing / open redirect** | `redirect_uri` compared **exactly** with the registered one (no prefix, no wildcard), and mandatory. On error there is no redirect: an error page is shown. DCR disabled by default; if enabled: exact allowlist, client cap, rate limit. The consent screen shows the client name and **the return domain**. Only `authorization_code` and `refresh_token` are accepted (no implicit, password or client_credentials). |
+| **Prompt injection via an email** | Content is returned under `untrusted_content`, with a warning in tool descriptions and server instructions. HTML is converted to text: scripts, styles, images and links removed, nothing is loaded. Above all, **no tool has an irreversible effect**: no sending, deleting, moving or flagging. The worst outcome is a draft, which the human reviews before sending it themselves. |
+| **Exfiltration via a draft** (a booby-trapped email pushes Claude to write data into a draft addressed to a third party) | The draft is **never sent** by the server. Recipients are validated and headers are protected against CRLF injection. Residual risk: see below. |
+| **Login brute force** | Argon2id password **and** TOTP required, compared in constant time. A TOTP code cannot be replayed. Exponential backoff (2^n s) then **15-min lockout after 5 failures**, per IP **and** globally. Everything is logged. CSRF on the form, `__Host-` cookie `Secure; HttpOnly; SameSite=Strict`. |
+| **Clickjacking / XSS on the login page** | Strict CSP (`default-src 'none'`, nonce-based style, `frame-ancestors 'none'`, restricted `form-action`), `X-Frame-Options: DENY`, systematic HTML escaping. |
+| **DNS rebinding / browser calls** | `Origin` checked on `/mcp` (403 if present and not allowlisted), `Host` checked by the SDK middleware. |
+| **IMAP injection** | Folders compared against the real list. Bounded integer UIDs, strict ISO dates, no control characters. Strings go through the ImapEngine API, which escapes them. |
+| **IMAP interception** | Implicit TLS (993) with **certificate and hostname verification**, 10 s timeout, connection closed at the end of each request. |
+| **Hosting compromise** | Secrets outside the web root (600/700); `public/` holds only `index.php` and `.htaccess`, with extra deny rules. Owner password and client secret hashed (Argon2id). The mailbox is only reachable with a **revocable app password**. Emergency procedure in the README. |
+| **Leaks through errors or logs** | `display_errors=Off`; clients get generic messages. Audit log without passwords, tokens, codes, secrets or mail content (draft bodies excluded), with masking of known sensitive keys as a safety net. A test checks this. |
+| **Application-level DoS** | Rate limits on `/token`, `/revoke`, `/register` (per IP) and `/mcp` (per token). MCP body capped at 1 MB. `limit` ≤ 50, parts over 2 MB skipped, body truncated to 50 KB. |
+| **Dependencies** | `composer.lock` committed, exact versions in `composer.json`, `composer audit` clean as of 2026-11-25. |
 
-## Risques résiduels assumés
+## Accepted residual risks
 
-1. **Lecture = exfiltration possible** : quiconque obtient un jeton valide, ou une injection de prompt qui réussit dans une conversation, peut **lire** la boîte via Claude. Les mesures limitent la durée (15 min / kill switch), pas la portée de lecture.
-2. **Brouillon piégé** : une injection peut amener Claude à créer un brouillon contenant des données, adressé à un tiers. Il n'est pas envoyé, mais un utilisateur distrait pourrait l'envoyer. Relisez toujours les brouillons.
-3. **Verrouillage global = DoS** : 5 tentatives fausses, quelle que soit leur origine, bloquent la connexion 15 min. C'est un choix restrictif voulu ; les jetons déjà émis continuent de fonctionner.
-4. **Compromission totale de l'hébergement** (compte Infomaniak, accès SSH) : l'attaquant lit `config.php`, donc le mot de passe d'application IMAP. Seule parade : révoquer ce mot de passe chez Infomaniak. Il n'existe pas de coffre-fort matériel sur un mutualisé.
-5. **Adresse IP** : les limites par IP utilisent `REMOTE_ADDR`. Un attaquant avec beaucoup d'IP contourne la limite par IP, mais pas la limite globale.
-6. **Origin absent accepté** : Claude appelle de serveur à serveur sans `Origin`. La protection DNS rebinding ne vaut donc que pour les navigateurs, qui envoient toujours `Origin`.
-7. **SDK MCP en 0.x** : l'API peut changer ; la version est épinglée. Relisez le changelog avant toute mise à jour.
-8. **Pas de CIMD** : les clients doivent être pré-enregistrés (ou enregistrés par DCR temporaire).
+1. **Reading = possible exfiltration**: anyone who gets a valid token, or a successful prompt injection within a conversation, can **read** the mailbox through Claude. The mitigations limit the duration (15 min / kill switch), not the read scope.
+2. **Booby-trapped draft**: an injection can lead Claude to create a draft containing data, addressed to a third party. It isn't sent, but a distracted user could send it. Always review drafts.
+3. **Global lockout = DoS**: 5 wrong attempts, from any source, block login for 15 min. This is a deliberate restrictive choice; tokens already issued keep working.
+4. **Full hosting compromise** (hosting account, SSH access): the attacker reads `config.php`, hence the IMAP app password. The only countermeasure is revoking that password at your mail provider. There is no hardware vault on shared hosting.
+5. **IP address**: per-IP limits use `REMOTE_ADDR`. An attacker with many IPs bypasses the per-IP limit, but not the global one.
+6. **Missing Origin accepted**: Claude calls server-to-server without `Origin`. DNS rebinding protection therefore only applies to browsers, which always send `Origin`.
+7. **MCP SDK at 0.x**: the API may change; the version is pinned. Read the changelog before any upgrade.
+8. **No CIMD**: clients must be pre-registered (or registered through temporary DCR).
 
-## Signaler une vulnérabilité
+## Reporting a vulnerability
 
-Contactez le propriétaire du dépôt directement (pas d'issue publique).
+Contact the repository owner directly (no public issue).
