@@ -29,7 +29,7 @@ return [
     ],
 
     'imap' => [
-        'host' => 'mail.infomaniak.com',
+        'host' => 'imap.example.com',          // serveur IMAP de votre fournisseur (TLS 993)
         'port' => 993,
         'username' => 'moi@mondomaine.ch',
         'password' => '',                     // MOT DE PASSE D'APPLICATION dédié

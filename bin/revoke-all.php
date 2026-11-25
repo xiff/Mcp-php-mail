@@ -11,4 +11,4 @@ if (in_array('--clients', $argv, true)) {
     $app->pdo->exec('DELETE FROM clients');
 }
 $app->log->log('kill_switch', ['clients_deleted' => in_array('--clients', $argv, true)]);
-echo "Tous les jetons sont révoqués. Pensez aussi à révoquer le mot de passe d'application chez Infomaniak.\n";
+echo "Tous les jetons sont révoqués. Pensez aussi à révoquer le mot de passe d'application chez votre fournisseur mail.\n";

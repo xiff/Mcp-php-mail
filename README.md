@@ -1,198 +1,199 @@
 <div align="center">
 
-# 📬 Mail MCP — Infomaniak
+# 📬 Mail MCP
 
-**Donnez à Claude un accès _limité_ et _sûr_ à votre boîte mail : lire, chercher, rédiger des brouillons. Jamais envoyer.**
+**Give Claude _limited_, _safe_ access to your mailbox: read, search, draft. Never send.**
 
 ![PHP](https://img.shields.io/badge/PHP-%E2%89%A58.3-777BB4?logo=php&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-2025--11--25-black)
 ![OAuth](https://img.shields.io/badge/OAuth-2.1%20%2B%20PKCE%20S256-2ea44f)
-![2FA](https://img.shields.io/badge/connexion-Argon2id%20%2B%20TOTP-orange)
-![Tests](https://img.shields.io/badge/tests-53%20verts-brightgreen)
-![Hébergement](https://img.shields.io/badge/h%C3%A9bergement-Infomaniak%20Web%20(mutualis%C3%A9)-0098FF)
+![2FA](https://img.shields.io/badge/login-Argon2id%20%2B%20TOTP-orange)
+![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)
+![Hosting](https://img.shields.io/badge/hosting-shared%20PHP-0098FF)
 
-[Démarrage rapide](#-démarrage-rapide) · [Outils](#-outils) · [Architecture](#-architecture) · [Déploiement](#déploiement-chez-infomaniak-offre-web) · [Connecteur claude.ai](#ajouter-le-connecteur-dans-claudeai) · [Urgence](#procédure-durgence) · [Sécurité](SECURITY.md)
+[Quick start](#-quick-start) · [Tools](#-tools) · [Architecture](#-architecture) · [Deployment](#deployment-shared-php-hosting) · [claude.ai connector](#adding-the-connector-in-claudeai) · [Emergency](#emergency-procedure) · [Security](SECURITY.md)
 
 </div>
 
 ---
 
-Serveur MCP distant qui donne à Claude (connecteur personnalisé claude.ai : web, mobile, Claude Code cloud)
-un accès **limité** à une boîte mail Infomaniak : lecture et création de brouillons. **Aucun envoi, aucune suppression,
-aucun déplacement, aucune modification de drapeau, aucun téléchargement de pièce jointe, aucune connexion SMTP.**
+A remote MCP server that gives Claude (claude.ai custom connector: web, mobile, Claude Code cloud sessions)
+**limited** access to one IMAP mailbox: reading and creating drafts. **No sending, no deleting, no moving,
+no flag changes, no attachment downloads, no SMTP connection at all.**
 
 > [!IMPORTANT]
-> La sécurité prime sur les fonctionnalités. Ce qui n'est pas codé ne peut pas être détourné : le pire qu'une
-> injection de prompt puisse faire, c'est créer un **brouillon** que vous relisez avant de l'envoyer vous-même.
+> Security comes before features. What isn't coded can't be abused: the worst a prompt injection can do is
+> create a **draft** that you review before sending it yourself.
 
-## ✨ En bref
+## ✨ At a glance
 
-- 🔒 **Lecture seule + brouillons** : 4 outils, aucune capacité destructive, pas de SMTP.
-- 🪪 **OAuth 2.1 complet** : PKCE S256 obligatoire, jetons de 15 min liés à l'URL du serveur (RFC 8707), refresh tokens à rotation avec détection de réutilisation.
-- 🔑 **Connexion forte** : mot de passe Argon2id + code TOTP à chaque autorisation, verrouillage après 5 échecs.
-- 🧯 **Kill switch** : une commande révoque tous les jetons instantanément.
-- 🧪 **Contenu non fiable balisé** : les mails arrivent dans `untrusted_content`, jamais comme instructions.
-- 🪶 **Mutualisé friendly** : PHP-FPM + `.htaccess`, une requête = un process, SQLite, aucun démon.
+- 🔒 **Read-only + drafts**: 4 tools, no destructive capability, no SMTP.
+- 🪪 **Full OAuth 2.1**: mandatory PKCE S256, 15-minute tokens bound to the server URL (RFC 8707), rotating refresh tokens with reuse detection.
+- 🔑 **Strong login**: Argon2id password + TOTP code on every authorization, lockout after 5 failures.
+- 🧯 **Kill switch**: one command revokes every token instantly.
+- 🧪 **Untrusted content is labeled**: mail content arrives in `untrusted_content`, never as instructions.
+- 🪶 **Shared-hosting friendly**: PHP-FPM + `.htaccess`, one request = one process, SQLite, no daemon.
 
-## 🚀 Démarrage rapide
+## 🚀 Quick start
 
 ```sh
 git clone https://github.com/xiff/Mcp-php-mail.git && cd Mcp-php-mail
 composer install --no-dev -o
 cp config/config.example.php config/config.php && chmod 600 config/config.php
 php bin/generate-keys.php && php bin/hash-password.php && php bin/create-totp.php && php bin/create-client.php
-bin/check-exposure.sh https://mcp.mondomaine.ch   # tout doit afficher « ok »
+bin/check-exposure.sh https://mcp.example.com   # every line must say "ok"
 ```
 
-Puis dans claude.ai : **Connecteurs → Ajouter** → `https://mcp.mondomaine.ch/mcp` + Client ID/Secret. Détails pas à pas [plus bas](#déploiement-chez-infomaniak-offre-web).
+Then in claude.ai: **Connectors → Add** → `https://mcp.example.com/mcp` + Client ID/Secret. Step-by-step details [below](#deployment-shared-php-hosting).
 
 ## 🏗 Architecture
 
 ```mermaid
 flowchart LR
-    C["Claude<br/>(web · mobile · cloud)"] -- "Bearer JWT (15 min)" --> M["/mcp<br/>Streamable HTTP sans état"]
-    U["Vous<br/>(navigateur)"] -- "mot de passe + TOTP" --> A["/authorize"]
+    C["Claude<br/>(web · mobile · cloud)"] -- "Bearer JWT (15 min)" --> M["/mcp<br/>stateless Streamable HTTP"]
+    U["You<br/>(browser)"] -- "password + TOTP" --> A["/authorize"]
     C -- "code + PKCE" --> T["/token"]
-    subgraph S["mcp.mondomaine.ch (Infomaniak Web)"]
-        A --> DB[("SQLite<br/>hors webroot")]
+    subgraph S["mcp.example.com (shared hosting)"]
+        A --> DB[("SQLite<br/>outside webroot")]
         T --> DB
-        M --> V{"jeton valide ?<br/>aud · exp · révoqué"}
-        V -- oui --> TL["4 outils<br/>validation stricte"]
+        M --> V{"valid token?<br/>aud · exp · revoked"}
+        V -- yes --> TL["4 tools<br/>strict validation"]
     end
-    TL -- "IMAPS 993<br/>certificat vérifié" --> I[("mail.infomaniak.com<br/>mot de passe d'application")]
+    TL -- "IMAPS 993<br/>certificate verified" --> I[("IMAP server<br/>app password")]
 ```
 
-### Flux de connexion
+### Login flow
 
 ```mermaid
 sequenceDiagram
     participant C as Claude
-    participant S as Serveur MCP
-    participant U as Vous
-    C->>S: POST /mcp (sans jeton)
+    participant S as MCP server
+    participant U as You
+    C->>S: POST /mcp (no token)
     S-->>C: 401 + resource_metadata
-    C->>S: GET /.well-known/… (métadonnées)
-    C->>U: ouvre /authorize?code_challenge=S256&resource=…
-    U->>S: identifiant + mot de passe + TOTP + « Autoriser »
-    S-->>C: redirection claude.ai/api/mcp/auth_callback?code=…
+    C->>S: GET /.well-known/… (metadata)
+    C->>U: opens /authorize?code_challenge=S256&resource=…
+    U->>S: username + password + TOTP + "Authorize"
+    S-->>C: redirect to claude.ai/api/mcp/auth_callback?code=…
     C->>S: POST /token (code + code_verifier + secret)
-    S-->>C: access token 15 min + refresh token (rotation)
-    C->>S: POST /mcp (Bearer) → outils
+    S-->>C: 15-min access token + refresh token (rotating)
+    C->>S: POST /mcp (Bearer) → tools
 ```
 
-## 🧰 Outils
+## 🧰 Tools
 
-| Outil | Effet | Annotations |
+| Tool | Effect | Annotations |
 |---|---|---|
-| `list_folders` | noms des dossiers | readOnly, non destructif |
-| `search_messages(folder, query?, from?, since?, unseen_only?, limit≤50)` | UID, date, expéditeur, sujet, extrait ≤ 200 car., indicateurs | readOnly |
-| `get_message(folder, uid)` | en-têtes + corps texte brut (HTML nettoyé), tronqué à 50 ko ; pièces jointes en métadonnées | readOnly |
-| `create_draft(to[], subject, body_text, in_reply_to_uid?, in_reply_to_folder?)` | APPEND dans Brouillons avec `\Draft`, `In-Reply-To`/`References` | non readOnly, non destructif |
+| `list_folders` | folder names | readOnly, non-destructive |
+| `search_messages(folder, query?, from?, since?, unseen_only?, limit≤50)` | UID, date, sender, subject, ≤ 200-char snippet, flags | readOnly |
+| `get_message(folder, uid)` | headers + plain-text body (HTML sanitized), truncated to 50 KB; attachments as metadata only | readOnly |
+| `create_draft(to[], subject, body_text, in_reply_to_uid?, in_reply_to_folder?)` | APPEND to Drafts with `\Draft`, `In-Reply-To`/`References` | not readOnly, non-destructive |
 
-Le contenu des mails est renvoyé dans un champ `untrusted_content`, et chaque description d'outil rappelle de ne jamais
-suivre les instructions qu'il contient.
+Mail content is returned in an `untrusted_content` field, and every tool description reminds the model never to
+follow instructions found inside it.
 
-## Ce qui a été vérifié avant d'écrire le code (25/11/2026)
+## What was verified before writing the code (2026-11-25)
 
-1. Spec MCP Authorization **2025-11-25** : le serveur MCP expose RFC 9728 ; le serveur d'autorisation expose RFC 8414 ; une requête sans jeton reçoit `401` + `WWW-Authenticate: Bearer resource_metadata="…"`.
-2. `code_challenge_methods_supported` est obligatoire dans les métadonnées, sinon le client abandonne. Seul `S256` est annoncé.
-3. Le client envoie `resource` (RFC 8707) à `/authorize` et `/token` ; le serveur DOIT refuser tout jeton dont l'audience n'est pas la sienne.
-4. Enregistrement des clients selon la spec : pré-enregistrement, puis CIMD, puis DCR (le DCR n'est conservé que pour compatibilité).
-5. Doc Claude (claude.com/docs/connectors/building/authentication) : Claude gère DCR et CIMD par défaut, et accepte un Client ID / Secret saisis dans le dialogue du connecteur personnalisé (secret facultatif).
-6. Callback des applications hébergées (web, desktop, mobile) : **exactement** `https://claude.ai/api/mcp/auth_callback`. Claude Code local utilise un callback loopback, non pris en charge ici.
-7. Claude exige PKCE S256, rafraîchit le jeton sur 401 et jusqu'à 5 min avant expiration, et attend `invalid_grant` pour un refresh token invalide. La rotation est acceptée.
-8. Les requêtes de Claude partent de `160.79.104.0/21`. Aucun en-tête `Origin` n'est documenté (appels serveur à serveur).
-9. Streamable HTTP : le serveur DOIT valider `Origin` (403 sinon). L'ID de session est facultatif, donc un serveur sans session est conforme.
-10. SDK `mcp/sdk` 0.10.0 : `StreamableHttpTransport` sans `setSession()` fonctionne sans session, une requête = un process PHP. Testé, ce mode convient au mutualisé.
+1. MCP Authorization spec **2025-11-25**: the MCP server exposes RFC 9728; the authorization server exposes RFC 8414; a request without a token gets `401` + `WWW-Authenticate: Bearer resource_metadata="…"`.
+2. `code_challenge_methods_supported` is mandatory in the metadata, otherwise the client gives up. Only `S256` is advertised.
+3. The client sends `resource` (RFC 8707) to `/authorize` and `/token`; the server MUST reject any token whose audience isn't itself.
+4. Client registration per the spec: pre-registration, then CIMD, then DCR (DCR is kept only for backward compatibility).
+5. Claude docs (claude.com/docs/connectors/building/authentication): Claude supports DCR and CIMD by default, and accepts a Client ID / Secret entered in the custom connector dialog (secret optional).
+6. Callback for hosted apps (web, desktop, mobile): **exactly** `https://claude.ai/api/mcp/auth_callback`. Local Claude Code uses a loopback callback, not supported here.
+7. Claude requires PKCE S256, refreshes on 401 and up to 5 min before expiry, and expects `invalid_grant` for an invalid refresh token. Rotation is supported.
+8. Claude's requests come from `160.79.104.0/21`. No `Origin` header is documented (server-to-server calls).
+9. Streamable HTTP: the server MUST validate `Origin` (403 otherwise). The session ID is optional, so a sessionless server is compliant.
+10. `mcp/sdk` 0.10.0: `StreamableHttpTransport` without `setSession()` runs sessionless, one request = one PHP process. Tested; this mode works on shared hosting.
 
-## Écarts et choix restrictifs à connaître
+## Deviations and restrictive choices
 
-- **Enregistrement** : un client **pré-enregistré** et confidentiel est créé par CLI. Le DCR est **désactivé** ; il s'active par drapeau avec une liste blanche exacte de `redirect_uris` et un nombre maximal de clients. Le **CIMD n'est pas implémenté** : il obligerait le serveur à télécharger des documents distants (surface d'attaque SSRF). Si votre compte claude.ai n'affiche pas les champs Client ID / Secret, activez le DCR (voir plus bas).
-- **Pas de session de connexion** : au lieu de `session_regenerate_id`, chaque demande d'autorisation crée un enregistrement à **usage unique** (cookie `__Host-`, 10 min, CSRF). Il est détruit dès la connexion. Chaque autorisation exige donc mot de passe + TOTP ; il n'existe pas de « rester connecté ».
-- **Connexion et consentement sur un seul écran** : client, domaine de retour et droits sont affichés au-dessus du formulaire, avec un bouton « Refuser ».
-- **JWT RS256** (et non EdDSA) : `league/oauth2-server` ne signe qu'en RS256 (clé RSA 3072 bits).
-- **`resource` au rafraîchissement** : obligatoire pour l'échange du code, et vérifié s'il est présent lors du rafraîchissement. L'audience du jeton reste toujours l'URL `/mcp`.
-- **`in_reply_to_folder`** a été ajouté, car un UID IMAP n'a de sens que dans un dossier (défaut `INBOX`).
-- **`send_draft`** n'existe pas. Le bloc `send` de la config (désactivé, liste blanche de destinataires) réserve la place ; l'interface `MailStore` n'a aucune méthode d'envoi.
-- **Verrouillage global** après 5 échecs : un attaquant peut vous bloquer 15 min (voir SECURITY.md).
-- **PHP minimum : 8.3**, imposé par `illuminate/collections` 13, une dépendance d'ImapEngine. Compatible avec 8.4 et 8.5 selon les contraintes des paquets ; les tests ont tourné sous 8.3.
+- **Registration**: a **pre-registered**, confidential client is created via CLI. DCR is **disabled**; it can be enabled by flag, with an exact `redirect_uris` allowlist and a maximum number of clients. **CIMD is not implemented**: it would make the server fetch remote documents (SSRF surface). If your claude.ai account doesn't show the Client ID / Secret fields, enable DCR (see below).
+- **No login session**: instead of `session_regenerate_id`, each authorization request creates a **single-use** record (`__Host-` cookie, 10 min, CSRF), destroyed as soon as you log in. Every authorization therefore requires password + TOTP; there is no "stay signed in".
+- **Login and consent on one screen**: client, return domain and requested rights are shown above the form, with a "Deny" button.
+- **RS256 JWTs** (not EdDSA): `league/oauth2-server` only signs with RS256 (3072-bit RSA key).
+- **`resource` on refresh**: mandatory for the code exchange, checked if present on refresh. The token audience is always the `/mcp` URL.
+- **`in_reply_to_folder`** was added, since an IMAP UID only makes sense within a folder (default `INBOX`).
+- **`send_draft`** does not exist. The `send` config block (disabled, recipient allowlist) reserves the spot; the `MailStore` interface has no send method.
+- **Global lockout** after 5 failures: an attacker can lock you out for 15 min (see SECURITY.md).
+- **Minimum PHP: 8.3**, required by `illuminate/collections` 13, a dependency of ImapEngine. Compatible with 8.4 and 8.5 per package constraints; tests were run on 8.3.
 
-### Pourquoi ImapEngine plutôt que webklex/php-imap
+### Why ImapEngine rather than webklex/php-imap
 
-`directorytree/imapengine` est en PHP pur, sans `ext-imap` (retirée de PHP 8.4), et activement maintenue. Elle lit les corps en `BODY.PEEK` (la lecture ne pose pas `\Seen`) et échappe elle-même les chaînes de recherche et de dossier. Elle permet aussi de récupérer **une seule partie MIME** : seules les parties texte/HTML sont téléchargées, jamais les pièces jointes. Inconvénient : elle tire `illuminate/collections` et `nesbot/carbon`, mais webklex en dépend aussi.
+`directorytree/imapengine` is pure PHP, needs no `ext-imap` (removed from PHP 8.4), and is actively maintained. It reads bodies with `BODY.PEEK` (reading never sets `\Seen`) and escapes search and folder strings itself. It can also fetch **a single MIME part**: only text/HTML parts are downloaded, never attachments. Downside: it pulls in `illuminate/collections` and `nesbot/carbon`, but webklex depends on them too.
 
-## Arborescence
+## Layout
 
 ```
-public/       index.php + .htaccess UNIQUEMENT (racine web du sous-domaine)
-src/          App (routeur, OAuth, MCP), OAuth/, Mail/, Mcp/, AuditLog, RateLimiter, Db
-bin/          scripts CLI
-config/       config.php + keys/ (ignorés par git, 600/700)
-var/          app.sqlite, log/ (ignoré par git, 700)
-tests/        PHPUnit (IMAP simulé)
+public/       index.php + .htaccess ONLY (subdomain web root)
+src/          App (router, OAuth, MCP), OAuth/, Mail/, Mcp/, AuditLog, RateLimiter, Db
+bin/          CLI scripts
+config/       config.php + keys/ (git-ignored, 600/700)
+var/          app.sqlite, log/ (git-ignored, 700)
+tests/        PHPUnit (mocked IMAP)
 ```
 
-## Déploiement chez Infomaniak (offre Web)
+## Deployment (shared PHP hosting)
 
-1. **Sous-domaine** : Manager → Hébergement Web → *Sites* → ajouter `mcp.mondomaine.ch`, puis définir son **dossier racine** sur `…/mcp-php-mail/public`.
-2. **Certificat** : sur le site, *SSL* → Let's Encrypt. Activez aussi « forcer HTTPS ».
-3. **PHP** : sur le site, *Gestion PHP* → choisissez **8.3 ou plus récent**. Extensions requises : `pdo_sqlite`, `openssl`, `mbstring`, `sodium`. Vérifiez que `display_errors` est sur **Off**.
-4. **SSH** (activez-le dans le Manager si besoin) :
+Requirements: Apache with `.htaccess` (mod_rewrite), PHP-FPM ≥ 8.3, SSH and Composer. No root, no daemon, no Docker needed.
+
+1. **Subdomain**: in your hosting panel, create `mcp.example.com` and set its **document root** to `…/Mcp-php-mail/public`.
+2. **Certificate**: enable a Let's Encrypt certificate for the subdomain, and force HTTPS if the panel offers it.
+3. **PHP**: select **8.3 or newer**. Required extensions: `pdo_sqlite`, `openssl`, `mbstring`, `sodium`. Make sure `display_errors` is **Off**.
+4. **SSH**:
    ```sh
-   cd ~/sites
-   git clone <votre-dépôt> mcp-php-mail && cd mcp-php-mail
+   git clone https://github.com/xiff/Mcp-php-mail.git && cd Mcp-php-mail
    composer install --no-dev --optimize-autoloader
    cp config/config.example.php config/config.php
-   chmod 700 config var 2>/dev/null; mkdir -p var && chmod 700 var; chmod 600 config/config.php
+   mkdir -p var && chmod 700 config var; chmod 600 config/config.php
    ```
-5. **Mot de passe d'application** : Manager → Service Mail → votre adresse → *Mots de passe d'application* → en créer un dédié « Claude MCP ». Placez-le dans `imap.password`. **N'utilisez jamais le mot de passe principal.**
-6. **Secrets** (chaque commande affiche une valeur à copier dans `config/config.php`) :
+5. **App password**: in your mail provider's settings, create a dedicated **app password** ("Claude MCP") and put it in `imap.password`. **Never use your main password.** Set `imap.host` to your provider's IMAP server (port 993, implicit TLS).
+6. **Secrets** (each command prints a value to copy into `config/config.php`):
    ```sh
-   php bin/generate-keys.php      # clés RSA + oauth.encryption_key
-   php bin/hash-password.php      # owner.password_hash (Argon2id, min. 16 caractères)
-   php bin/create-totp.php        # owner.totp_secret + URI otpauth:// à scanner
-   php bin/create-client.php      # Client ID + Client Secret (affichés une seule fois)
+   php bin/generate-keys.php      # RSA keys + oauth.encryption_key
+   php bin/hash-password.php      # owner.password_hash (Argon2id, min. 16 chars)
+   php bin/create-totp.php        # owner.totp_secret + otpauth:// URI to scan
+   php bin/create-client.php      # Client ID + Client Secret (shown only once)
    history -c
    ```
-   Renseignez aussi `base_url`, `imap.username` et `imap.drafts_folder` (le nom exact renvoyé par `list_folders` ; chez Infomaniak, normalement `Drafts`).
-7. **Permissions finales** : `chmod 600 config/config.php config/keys/*; chmod 700 config config/keys var var/log`.
-8. **Vérification externe** : `bin/check-exposure.sh https://mcp.mondomaine.ch`. Chaque ligne doit afficher `ok`.
+   Also fill in `base_url`, `imap.username` and `imap.drafts_folder` (the exact name returned by `list_folders`, often `Drafts`).
+7. **Final permissions**: `chmod 600 config/config.php config/keys/*; chmod 700 config config/keys var var/log`.
+8. **External check**: `bin/check-exposure.sh https://mcp.example.com`. Every line must say `ok`.
 
-Mise à jour : `git pull && composer install --no-dev -o && composer audit`.
+Updating: `git pull && composer install --no-dev -o && composer audit`.
 
-## Ajouter le connecteur dans claude.ai
+## Adding the connector in claude.ai
 
-1. claude.ai → *Paramètres* → *Connecteurs* → *Ajouter un connecteur personnalisé*.
-2. URL : `https://mcp.mondomaine.ch/mcp`.
-3. *Paramètres avancés* : collez le **Client ID** et le **Client Secret** donnés par `bin/create-client.php`.
-4. *Connecter* : la page de connexion du serveur s'ouvre. Saisissez identifiant, mot de passe et code TOTP, puis cliquez sur « Se connecter et autoriser ».
-5. Le connecteur est ensuite disponible sur le web, l'app mobile et les sessions Claude Code cloud.
+1. claude.ai → *Settings* → *Connectors* → *Add custom connector*.
+2. URL: `https://mcp.example.com/mcp`.
+3. *Advanced settings*: paste the **Client ID** and **Client Secret** from `bin/create-client.php`.
+4. *Connect*: the server's login page opens. Enter username, password and TOTP code, then click "Sign in and authorize".
+5. The connector is then available on the web, the mobile app and Claude Code cloud sessions.
 
-**Sans champs Client ID / Secret** : mettez `oauth.dcr_enabled => true` (les valeurs par défaut gardent la liste blanche `https://claude.ai/api/mcp/auth_callback` et 2 clients au maximum), ajoutez le connecteur, puis **remettez `false`** une fois connecté. Les clients créés restent valides.
+**No Client ID / Secret fields?** Set `oauth.dcr_enabled => true` (defaults keep the `https://claude.ai/api/mcp/auth_callback` allowlist and a 2-client maximum), add the connector, then **set it back to `false`** once connected. Clients already created stay valid.
 
-## Rotation du mot de passe d'application
+## Rotating the app password
 
-1. Créez un nouveau mot de passe d'application chez Infomaniak.
-2. Remplacez `imap.password` dans `config/config.php`.
-3. Supprimez l'ancien dans le Manager.
+1. Create a new app password at your mail provider.
+2. Replace `imap.password` in `config/config.php`.
+3. Delete the old one at your provider.
 
-Aucun redémarrage n'est nécessaire, car chaque requête relit la config.
+No restart needed: every request re-reads the config.
 
-## Procédure d'urgence
+## Emergency procedure
 
-Si vous soupçonnez un vol de jeton, un appareil perdu ou une activité anormale dans `var/log/audit.log` :
+If you suspect a stolen token, a lost device or unusual activity in `var/log/audit.log`:
 
-1. **Kill switch** : `php bin/revoke-all.php`. Tous les jetons deviennent invalides **immédiatement**, car chaque appel MCP vérifie la base. Ajoutez `--clients` pour supprimer aussi les clients OAuth.
-2. **Infomaniak** : révoquez le **mot de passe d'application** dans le Manager. La boîte est alors inaccessible même si `config.php` a fui.
-3. Si l'hébergement lui-même est suspect : `php bin/generate-keys.php --force`, puis changez le mot de passe propriétaire (`hash-password.php`), le secret TOTP (`create-totp.php`) et le client (`revoke-all.php --clients` puis `create-client.php`).
-4. Pour couper totalement le service, renommez `config/config.php` : le serveur répond alors 503.
+1. **Kill switch**: `php bin/revoke-all.php`. Every token becomes invalid **immediately**, since each MCP call checks the database. Add `--clients` to delete OAuth clients too.
+2. **Mail provider**: revoke the **app password**. The mailbox is then unreachable even if `config.php` leaked.
+3. If the hosting itself is suspect: `php bin/generate-keys.php --force`, then change the owner password (`hash-password.php`), the TOTP secret (`create-totp.php`) and the client (`revoke-all.php --clients` then `create-client.php`).
+4. To shut the service down completely, rename `config/config.php`: the server then answers 503.
 
 ## Tests
 
 ```sh
 composer install
-vendor/bin/phpunit       # flux OAuth complet, rejets, validation des outils, logs sans secret
+vendor/bin/phpunit       # full OAuth flow, rejections, tool validation, secret-free logs
 composer audit
 ```
 
-Durcissement optionnel : dans `.htaccess`, limiter `/mcp`, `/token` et `/revoke` à `160.79.104.0/21` (plage sortante de Claude). Ne restreignez **pas** `/authorize`, que votre navigateur doit pouvoir joindre.
+Optional hardening: in `.htaccess`, restrict `/mcp`, `/token` and `/revoke` to `160.79.104.0/21` (Claude's outbound range). Do **not** restrict `/authorize`, which your browser must reach.

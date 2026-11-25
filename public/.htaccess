@@ -13,7 +13,7 @@ CGIPassAuth On
 RewriteEngine On
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
-# HTTPS obligatoire (Infomaniak termine parfois TLS en amont : X-Forwarded-Proto).
+# HTTPS obligatoire (certains hébergeurs terminent TLS en amont : X-Forwarded-Proto).
 RewriteCond %{HTTPS} !=on
 RewriteCond %{HTTP:X-Forwarded-Proto} !=https
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]

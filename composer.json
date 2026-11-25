@@ -33,7 +33,7 @@
             "MailMcp\\Tests\\": "tests/"
         }
     },
-    "description": "Serveur MCP distant (lecture + brouillons) pour une boîte mail Infomaniak",
+    "description": "Serveur MCP distant (lecture + brouillons) pour une boîte mail IMAP",
     "license": "proprietary",
     "scripts": {
         "test": "phpunit"
