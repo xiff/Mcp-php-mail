@@ -1,8 +1,86 @@
-# Serveur MCP « boîte mail » (Infomaniak, PHP)
+<div align="center">
+
+# 📬 Mail MCP — Infomaniak
+
+**Donnez à Claude un accès _limité_ et _sûr_ à votre boîte mail : lire, chercher, rédiger des brouillons. Jamais envoyer.**
+
+![PHP](https://img.shields.io/badge/PHP-%E2%89%A58.3-777BB4?logo=php&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-2025--11--25-black)
+![OAuth](https://img.shields.io/badge/OAuth-2.1%20%2B%20PKCE%20S256-2ea44f)
+![2FA](https://img.shields.io/badge/connexion-Argon2id%20%2B%20TOTP-orange)
+![Tests](https://img.shields.io/badge/tests-53%20verts-brightgreen)
+![Hébergement](https://img.shields.io/badge/h%C3%A9bergement-Infomaniak%20Web%20(mutualis%C3%A9)-0098FF)
+
+[Démarrage rapide](#-démarrage-rapide) · [Outils](#-outils) · [Architecture](#-architecture) · [Déploiement](#déploiement-chez-infomaniak-offre-web) · [Connecteur claude.ai](#ajouter-le-connecteur-dans-claudeai) · [Urgence](#procédure-durgence) · [Sécurité](SECURITY.md)
+
+</div>
+
+---
 
 Serveur MCP distant qui donne à Claude (connecteur personnalisé claude.ai : web, mobile, Claude Code cloud)
 un accès **limité** à une boîte mail Infomaniak : lecture et création de brouillons. **Aucun envoi, aucune suppression,
 aucun déplacement, aucune modification de drapeau, aucun téléchargement de pièce jointe, aucune connexion SMTP.**
+
+> [!IMPORTANT]
+> La sécurité prime sur les fonctionnalités. Ce qui n'est pas codé ne peut pas être détourné : le pire qu'une
+> injection de prompt puisse faire, c'est créer un **brouillon** que vous relisez avant de l'envoyer vous-même.
+
+## ✨ En bref
+
+- 🔒 **Lecture seule + brouillons** : 4 outils, aucune capacité destructive, pas de SMTP.
+- 🪪 **OAuth 2.1 complet** : PKCE S256 obligatoire, jetons de 15 min liés à l'URL du serveur (RFC 8707), refresh tokens à rotation avec détection de réutilisation.
+- 🔑 **Connexion forte** : mot de passe Argon2id + code TOTP à chaque autorisation, verrouillage après 5 échecs.
+- 🧯 **Kill switch** : une commande révoque tous les jetons instantanément.
+- 🧪 **Contenu non fiable balisé** : les mails arrivent dans `untrusted_content`, jamais comme instructions.
+- 🪶 **Mutualisé friendly** : PHP-FPM + `.htaccess`, une requête = un process, SQLite, aucun démon.
+
+## 🚀 Démarrage rapide
+
+```sh
+git clone https://github.com/xiff/Mcp-php-mail.git && cd Mcp-php-mail
+composer install --no-dev -o
+cp config/config.example.php config/config.php && chmod 600 config/config.php
+php bin/generate-keys.php && php bin/hash-password.php && php bin/create-totp.php && php bin/create-client.php
+bin/check-exposure.sh https://mcp.mondomaine.ch   # tout doit afficher « ok »
+```
+
+Puis dans claude.ai : **Connecteurs → Ajouter** → `https://mcp.mondomaine.ch/mcp` + Client ID/Secret. Détails pas à pas [plus bas](#déploiement-chez-infomaniak-offre-web).
+
+## 🏗 Architecture
+
+```mermaid
+flowchart LR
+    C["Claude<br/>(web · mobile · cloud)"] -- "Bearer JWT (15 min)" --> M["/mcp<br/>Streamable HTTP sans état"]
+    U["Vous<br/>(navigateur)"] -- "mot de passe + TOTP" --> A["/authorize"]
+    C -- "code + PKCE" --> T["/token"]
+    subgraph S["mcp.mondomaine.ch (Infomaniak Web)"]
+        A --> DB[("SQLite<br/>hors webroot")]
+        T --> DB
+        M --> V{"jeton valide ?<br/>aud · exp · révoqué"}
+        V -- oui --> TL["4 outils<br/>validation stricte"]
+    end
+    TL -- "IMAPS 993<br/>certificat vérifié" --> I[("mail.infomaniak.com<br/>mot de passe d'application")]
+```
+
+### Flux de connexion
+
+```mermaid
+sequenceDiagram
+    participant C as Claude
+    participant S as Serveur MCP
+    participant U as Vous
+    C->>S: POST /mcp (sans jeton)
+    S-->>C: 401 + resource_metadata
+    C->>S: GET /.well-known/… (métadonnées)
+    C->>U: ouvre /authorize?code_challenge=S256&resource=…
+    U->>S: identifiant + mot de passe + TOTP + « Autoriser »
+    S-->>C: redirection claude.ai/api/mcp/auth_callback?code=…
+    C->>S: POST /token (code + code_verifier + secret)
+    S-->>C: access token 15 min + refresh token (rotation)
+    C->>S: POST /mcp (Bearer) → outils
+```
+
+## 🧰 Outils
 
 | Outil | Effet | Annotations |
 |---|---|---|
