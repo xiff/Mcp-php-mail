@@ -159,7 +159,31 @@ Requirements: Apache with `.htaccess` (mod_rewrite), PHP-FPM ≥ 8.3, SSH and Co
 7. **Final permissions**: `chmod 600 config/config.php config/keys/*; chmod 700 config config/keys var var/log`.
 8. **External check**: `bin/check-exposure.sh https://mcp.example.com`. Every line must say `ok`.
 
-Updating: `git pull && composer install --no-dev -o && composer audit`.
+Updating by hand: `git pull && composer install --no-dev -o && composer audit`.
+
+### Automatic deployment (GitHub Actions)
+
+`.github/workflows/ci-deploy.yml` runs the tests and `composer audit` on every pull request and push. On a push to
+`main`, it then builds `vendor/` and uploads the code over **rsync/SSH**. `config/` and `var/` on the server are never
+touched or deleted. Deployment is **off** until you enable it:
+
+1. On the server, do steps 1–7 above once (config, secrets, permissions).
+2. Create a dedicated deploy key: `ssh-keygen -t ed25519 -f deploy_key -N ""`, then append `deploy_key.pub` to `~/.ssh/authorized_keys` on the server.
+3. Get the server's host key: `ssh-keyscan -t ed25519 <ssh-host>` (check its fingerprint against your host's panel).
+4. GitHub → *Settings → Environments* → create **`production`** (optionally add yourself as a required reviewer for a manual approval gate), then add the secrets:
+
+   | Secret | Value |
+   |---|---|
+   | `DEPLOY_SSH_KEY` | contents of `deploy_key` (private key) |
+   | `DEPLOY_KNOWN_HOSTS` | output of `ssh-keyscan` |
+   | `DEPLOY_HOST` | SSH host |
+   | `DEPLOY_USER` | SSH user |
+   | `DEPLOY_PATH` | absolute path of the project directory (the parent of `public/`) |
+
+5. *Settings → Secrets and variables → Actions → Variables*: `DEPLOY_ENABLED` = `true`, and `DEPLOY_URL` = `https://mcp.example.com` to run `check-exposure.sh` after each deployment.
+
+The deploy key can write to your hosting account: keep it dedicated to this workflow and delete it from
+`authorized_keys` to revoke it.
 
 ## Adding the connector in claude.ai
 

@@ -1,0 +1,68 @@
+name: CI & deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04   # ships PHP 8.3 + Composer: no third-party setup action needed
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: PHP version and extensions
+        run: |
+          php -v
+          php -m | grep -E -i '^(pdo_sqlite|openssl|mbstring|sodium)$'
+      - run: composer install --no-interaction --no-progress
+      - run: vendor/bin/phpunit
+      - run: composer audit
+
+  deploy:
+    needs: test
+    # Opt-in: set the repository variable DEPLOY_ENABLED=true once the secrets below exist.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: production   # add required reviewers here for a manual approval gate
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build production vendor/
+        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+      - name: Configure SSH (pinned host key, no TOFU)
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
+      - name: Upload (config/ and var/ on the server are never touched)
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          DEST: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          rsync -az --delete -e "ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes" \
+            --exclude='/.git/' --exclude='/.github/' --exclude='/tests/' --exclude='/phpunit.xml.dist' \
+            --exclude='/.phpunit.cache/' --include='/config/config.example.php' --exclude='/config/*' --exclude='/var/' \
+            ./ "$USER@$HOST:$DEST/"
+          ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes "$USER@$HOST" \
+            "cd '$DEST' && php -v | head -1 && test -f config/config.php"
+      - name: Check nothing sensitive is exposed
+        if: vars.DEPLOY_URL != ''
+        run: bash bin/check-exposure.sh "${{ vars.DEPLOY_URL }}"
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy
