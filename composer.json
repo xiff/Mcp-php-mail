@@ -1,0 +1,41 @@
+{
+    "name": "local/mcp-php-mail",
+    "type": "project",
+    "require": {
+        "php": ">=8.3",
+        "ext-pdo_sqlite": "*",
+        "ext-openssl": "*",
+        "ext-mbstring": "*",
+        "mcp/sdk": "0.10.0",
+        "league/oauth2-server": "9.5.0",
+        "nyholm/psr7": "1.8.2",
+        "nyholm/psr7-server": "1.1.0",
+        "directorytree/imapengine": "1.26.0",
+        "symfony/mime": "7.4.24",
+        "spomky-labs/otphp": "11.5.1"
+    },
+    "config": {
+        "platform": {
+            "php": "8.3.0"
+        },
+        "sort-packages": true
+    },
+    "require-dev": {
+        "phpunit/phpunit": "12.5.45"
+    },
+    "autoload": {
+        "psr-4": {
+            "MailMcp\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MailMcp\\Tests\\": "tests/"
+        }
+    },
+    "description": "Serveur MCP distant (lecture + brouillons) pour une boîte mail Infomaniak",
+    "license": "proprietary",
+    "scripts": {
+        "test": "phpunit"
+    }
+}

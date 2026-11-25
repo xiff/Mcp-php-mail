@@ -1,0 +1,30 @@
+# public/ ne contient que index.php et ce fichier. Tout le reste est hors racine web.
+Options -Indexes -MultiViews
+ServerSignature Off
+
+# Les en-têtes de sécurité (HSTS, CSP, no-store...) sont posés par l'application.
+<IfModule mod_headers.c>
+    Header always unset X-Powered-By
+</IfModule>
+
+# Transmettre l'en-tête Authorization à PHP-FPM.
+CGIPassAuth On
+
+RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+# HTTPS obligatoire (Infomaniak termine parfois TLS en amont : X-Forwarded-Proto).
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# .well-known est servi par l'application.
+RewriteRule ^\.well-known/ index.php [L]
+
+# Fichiers cachés, VCS, dépendances, config : interdits (ceinture + bretelles).
+RewriteRule (^|/)\. - [F,L]
+RewriteRule (^|/)(vendor|config|var|src|bin|tests|composer\.(json|lock))(/|$) - [F,L]
+
+# Tout le reste vers le routeur.
+RewriteCond %{REQUEST_URI} !^/index\.php$
+RewriteRule ^ index.php [L]
